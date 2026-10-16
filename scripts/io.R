@@ -26,10 +26,11 @@ gh_download_asset <- function(repo, tag, asset, dir, runner = system2) {
 
 #' GET with retries. Returns list(status, body); status 0 when every try failed
 #' without an HTTP answer.
-http_get <- function(url, tries = HTTP_TRIES, wait = HTTP_WAIT_S) {
+http_get <- function(url, tries = HTTP_TRIES, wait = HTTP_WAIT_S, fetch = curl::curl_fetch_memory) {
   last <- list(status = 0L, body = raw(0))
   for (k in seq_len(tries)) {
-    res <- tryCatch(curl::curl_fetch_memory(url), error = function(e) NULL)
+    h <- curl::new_handle(connecttimeout = HTTP_CONNECT_TIMEOUT_S, timeout = HTTP_TIMEOUT_S)
+    res <- tryCatch(fetch(url, handle = h), error = function(e) NULL)
     if (!is.null(res)) {
       last <- list(status = as.integer(res$status_code), body = res$content)
       if (last$status < 500L && last$status != 429L) return(last)
@@ -37,6 +38,18 @@ http_get <- function(url, tries = HTTP_TRIES, wait = HTTP_WAIT_S) {
     if (k < tries) Sys.sleep(wait * k)
   }
   last
+}
+
+#' list(status, record) for an OSV record response. A 200 body that does not
+#' parse counts as failed.
+parse_vuln_response <- function(status, body) {
+  if (status == 200L) {
+    rec <- tryCatch(jsonlite::parse_json(rawToChar(body), simplifyVector = FALSE), error = function(e) NULL)
+    if (is.null(rec)) return(list(status = "failed", record = NULL))
+    return(list(status = "ok", record = rec))
+  }
+  if (status == 404L) return(list(status = "not_in_osv", record = NULL))
+  list(status = "failed", record = NULL)
 }
 
 #' The real providers. Each throws on a failure the run must not get past.
@@ -71,11 +84,7 @@ default_io <- function() {
     },
     osv_vuln = function(id) {
       r <- http_get(paste0(OSV_API, "/", utils::URLencode(id)))
-      if (r$status == 200L) {
-        return(list(status = "ok", record = jsonlite::parse_json(rawToChar(r$body), simplifyVector = FALSE)))
-      }
-      if (r$status == 404L) return(list(status = "not_in_osv", record = NULL))
-      list(status = "failed", record = NULL)
+      parse_vuln_response(r$status, r$body)
     },
     now = function() Sys.time()
   )
