@@ -37,3 +37,16 @@ test_that("the keepalive job exists and commits last-updated.txt", {
   expect_match(wf, "keepalive:", fixed = TRUE)
   expect_match(wf, "git add last-updated.txt", fixed = TRUE)
 })
+
+test_that("the output is kept as an artifact between the build and the publish", {
+  wf <- .update_yml()
+  art <- grep("uses: actions/upload-artifact@v7", wf, fixed = TRUE)
+  expect_length(art, 1L)
+  build <- grep("- name: Build advisories database", wf, fixed = TRUE)
+  publish <- grep('- name: Publish to the "current" release', wf, fixed = TRUE)
+  expect_true(art > build && art < publish)
+  block <- paste(wf[art:(publish - 1L)], collapse = "\n")
+  expect_match(block, "name: osv-advisories-out", fixed = TRUE)
+  expect_match(block, "path: out/", fixed = TRUE)
+  expect_match(block, "retention-days: 30", fixed = TRUE)
+})
