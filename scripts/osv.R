@@ -13,6 +13,21 @@ ecosystems_to_fetch <- function(listed, wanted = ECOSYSTEMS_WANTED) {
   wanted[wanted %in% listed]
 }
 
+#' Unzip into dir and return the extracted .json paths. Any unzip warning is an
+#' error, and so is a .json entry that did not come out as a file.
+unzip_strict <- function(zip, dir) {
+  entries <- utils::unzip(zip, list = TRUE)$Name
+  want <- sum(grepl("\\.json$", entries) & !grepl("/", entries, fixed = TRUE))
+  withCallingHandlers(
+    utils::unzip(zip, exdir = dir),
+    warning = function(w) stop("unzip of ", basename(zip), ": ", conditionMessage(w), call. = FALSE))
+  got <- list.files(dir, pattern = "\\.json$", full.names = TRUE)
+  if (length(got) != want) {
+    stop(sprintf("unzip of %s: %d .json entries listed, %d extracted", basename(zip), want, length(got)), call. = FALSE)
+  }
+  got
+}
+
 #' Every *.json file under dir as list(record, raw), sorted by file name.
 read_osv_dir <- function(dir) {
   files <- sort(list.files(dir, pattern = "\\.json$", full.names = TRUE))

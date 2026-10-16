@@ -76,3 +76,35 @@ publish_guard <- function(prev_manifest, advisories, history) {
   }
   reasons
 }
+
+#' Reasons to refuse on today's parsed advisories, before anything carries
+#' forward. prev_manifest is NULL on a cold start.
+parse_guard <- function(prev_manifest, parsed_n) {
+  if (parsed_n == 0L) return("no advisories parsed")
+  if (is.null(prev_manifest)) return(character(0))
+  prev_n <- prev_manifest$counts$advisories_parsed %||%
+    ((prev_manifest$tables$advisories %||% 0L) - (prev_manifest$counts$advisories_not_in_osv %||% 0L))
+  prev_n <- as.integer(prev_n)
+  tolerance <- max(PARSED_DROP_MIN, floor(PARSED_DROP_FRACTION * prev_n))
+  if (parsed_n < prev_n - tolerance) {
+    return(sprintf("advisories parsed fell from %d to %d", prev_n, parsed_n))
+  }
+  character(0)
+}
+
+#' Reasons to refuse on the CRAN version list and the tarball matches.
+versions_guard <- function(prev_manifest, versions_read, affected_in_tarballs) {
+  reasons <- character(0)
+  if (versions_read == 0L) return("no CRAN versions read from cran-archive")
+  if (!is.null(prev_manifest)) {
+    prev_v <- prev_manifest$counts$versions_read
+    if (!is.null(prev_v) && versions_read < VERSIONS_FLOOR_FRACTION * prev_v) {
+      reasons <- c(reasons, sprintf("CRAN versions read fell from %d to %d", as.integer(prev_v), versions_read))
+    }
+    prev_a <- prev_manifest$counts$affected_in_tarballs
+    if (affected_in_tarballs == 0L && !is.null(prev_a) && prev_a > 0L) {
+      reasons <- c(reasons, "no affected version matched a tarball (was above 0)")
+    }
+  }
+  reasons
+}

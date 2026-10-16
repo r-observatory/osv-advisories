@@ -42,6 +42,7 @@ run_update <- function(io, out_dir, license_src = file.path(.script_dir, "..", L
 
   # 2. The previous release. A failed download stops the run here.
   prev <- io$prev_state()
+  if (!prev$status %in% c("ok", "cold_start")) stop("unexpected previous-release status: ", prev$status)
   prev_tables <- if (identical(prev$status, "ok")) read_prev_tables(prev$db) else list()
   prev_manifest <- if (identical(prev$status, "ok")) prev$manifest else NULL
 
@@ -50,13 +51,16 @@ run_update <- function(io, out_dir, license_src = file.path(.script_dir, "..", L
   for (eco in fetch) {
     zip <- io$osv_zip(eco, file.path(out_dir, raw_zip_name(eco)))
     dir <- tempfile(paste0("osv-", eco, "-")); dir.create(dir)
-    utils::unzip(zip, exdir = dir)
+    unzip_strict(zip, dir)
     items <- read_osv_dir(dir)
     adv <- rbind(adv, osv_advisories_df(items, eco))
     ranges <- rbind(ranges, osv_ranges_df(items, eco))
     listed_v <- rbind(listed_v, osv_listed_df(items, eco))
   }
   if (any(duplicated(adv$id))) stop("duplicate advisory ids across ecosystems")
+  parsed_n <- nrow(adv)
+  reasons <- parse_guard(prev_manifest, parsed_n)
+  if (length(reasons)) stop("not publishing: ", paste(reasons, collapse = "; "))
 
   # 4. Expand CRAN ranges against every CRAN version ever published.
   versions <- io$archive_versions()
@@ -64,10 +68,15 @@ run_update <- function(io, out_dir, license_src = file.path(.script_dir, "..", L
   ex <- expand_affected(ranges[ranges$ecosystem %in% EXPAND_ECOSYSTEMS, , drop = FALSE],
                         listed_v[listed_v$ecosystem %in% EXPAND_ECOSYSTEMS, , drop = FALSE],
                         versions, withdrawn)
+  affected_in_tarballs <- sum(ex$rows$in_tarballs == 1L)
+  reasons <- versions_guard(prev_manifest, nrow(versions), affected_in_tarballs)
+  if (length(reasons)) stop("not publishing: ", paste(reasons, collapse = "; "))
 
   # 5. Upstream severity. A failed lookup never blocks the run.
   ids <- upstream_ids(adv)
-  lookups <- setNames(lapply(ids, io$osv_vuln), ids)
+  lookups <- setNames(lapply(ids, function(id) {
+    tryCatch(io$osv_vuln(id), error = function(e) list(status = "failed", record = NULL))
+  }), ids)
   failed <- ids[vapply(lookups, function(l) identical(l$status, "failed"), logical(1))]
   upstream <- carry_upstream(prev_tables$advisory_upstream,
                              upstream_rows(adv, lookups, iso(now)), failed)
@@ -92,7 +101,9 @@ run_update <- function(io, out_dir, license_src = file.path(.script_dir, "..", L
     ecosystems_listed = I(listed), ecosystems_fetched = I(fetch),
     tables = lapply(tables, nrow),
     history_earliest = if (nrow(history)) min(history$first_seen) else NA,
-    counts = list(unparsed_versions = ex$unparsed, listed_not_in_tarballs = ex$listed_missing,
+    counts = list(advisories_parsed = parsed_n, versions_read = nrow(versions),
+                  affected_in_tarballs = affected_in_tarballs,
+                  unparsed_versions = ex$unparsed, listed_not_in_tarballs = ex$listed_missing,
                   range_not_in_osv_list = ex$range_not_listed, upstream_lookups = length(ids),
                   upstream_failed = length(failed), advisories_not_in_osv = sum(advisories$in_osv == 0L)),
     bioconductor_expansion_pending = bioc_pending,

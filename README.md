@@ -21,15 +21,27 @@ A `backup-YYYY-MM` release holds a copy made by the first run of each month. Bac
 
 An upstream rating describes the upstream flaw, not how exposed the R package is. Nothing here adds ratings up into a figure for a package.
 
+A withdrawn advisory has no affected versions. An advisory OSV no longer lists (`in_osv = 0`) keeps only its `advisories` row: no ranges, affected versions or upstream rows.
+
 ## When a run publishes nothing
 
 - OSV's ecosystem list does not include CRAN, or the CRAN export cannot be downloaded.
-- The previous release exists but cannot be downloaded. A repository with no release yet is a cold start.
-- The cran-archive release cannot be downloaded.
-- The run has fewer advisories than the previous manifest declared, or `advisory_history` would lose rows or its earliest row.
+- The export zip is damaged: any unzip warning, or a different number of extracted `.json` files than the zip lists, stops the run.
+- No advisories were parsed, or today's parsed count is below the previous run's by more than 10% (at least one is always tolerated).
+- The previous release exists but cannot be downloaded, or reports an unexpected status. A repository with no release yet is a cold start.
+- The cran-archive release cannot be downloaded, returns no versions, returns under 90% of the previous run's count, or no affected version matches a tarball when the previous run had some.
+- The carried `advisories` table has fewer rows than the previous manifest declared, or `advisory_history` would lose rows or its earliest row.
 - The same advisory id appears in two ecosystems.
 
 A failed upstream lookup never stops a run. It is counted in the manifest.
+
+## Repair
+
+Publishing replaces each asset with `gh release upload --clobber`, which deletes the old asset first. If an upload fails, `current` can be left without its database or manifest, and every later run then stops because it cannot read the previous release, so a plain re-run does not repair it. Upload the four files again, from the run's `osv-advisories-out` artifact or from the newest `backup-YYYY-MM` release, then re-run:
+
+```sh
+gh release upload current osv-advisories.db manifest.json osv-CRAN-all.zip ADVISORY-DATA-LICENSE.txt --repo r-observatory/osv-advisories --clobber
+```
 
 ## Access
 
