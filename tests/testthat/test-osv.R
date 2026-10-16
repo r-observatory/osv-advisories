@@ -26,6 +26,8 @@ test_that("the real export parses into 14 advisories over 10 packages", {
   expect_true(all(c("RSEC-2023-0", "RSEC-2026-1") %in% adv$id))
   cm <- adv[adv$id == "RSEC-2023-6", ]
   expect_equal(jsonlite::fromJSON(cm$upstream), "CVE-2020-5238")
+  expect_match(cm$upstream, "^\\[")
+  expect_true(all(substr(adv$upstream[!is.na(adv$upstream)], 1, 1) == "["))
   expect_true(all(is.na(adv$aliases)) && all(is.na(adv$withdrawn)))
   refs <- jsonlite::fromJSON(cm$refs)
   expect_true(all(c("type", "url") %in% names(refs)))
@@ -56,4 +58,15 @@ test_that("only .json files are read, so a stray file in the zip is ignored", {
   items <- read_osv_dir(dir)
   expect_length(items, 1L)
   expect_equal(items[[1]]$record$id, "RSEC-2023-3")
+})
+
+test_that("upstream, aliases and related are always JSON arrays", {
+  it <- osv_record("X-1", "pkg", list(list(introduced = "0")), upstream = "CVE-1")
+  it$record$aliases <- list("GHSA-1"); it$record$related <- list("R-1", "R-2")
+  adv <- osv_advisories_df(list(it), "CRAN")
+  expect_equal(adv$upstream, '["CVE-1"]')
+  expect_equal(adv$aliases, '["GHSA-1"]')
+  expect_equal(adv$related, '["R-1","R-2"]')
+  none <- osv_advisories_df(list(osv_record("X-2", "pkg", list(list(introduced = "0")))), "CRAN")
+  expect_true(is.na(none$upstream) && is.na(none$aliases) && is.na(none$related))
 })

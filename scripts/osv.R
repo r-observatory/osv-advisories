@@ -27,6 +27,12 @@ read_osv_dir <- function(dir) {
   else as.character(jsonlite::toJSON(x, auto_unbox = TRUE))
 }
 
+# A flat id list as a JSON array, even for one id; NA when empty.
+.json_array_or_na <- function(x) {
+  x <- as.character(unlist(x))
+  if (!length(x)) NA_character_ else as.character(jsonlite::toJSON(x))
+}
+
 #' One row per advisory. in_osv and first_seen are filled in by state.R.
 osv_advisories_df <- function(items, ecosystem) {
   rows <- lapply(items, function(it) {
@@ -36,8 +42,8 @@ osv_advisories_df <- function(items, ecosystem) {
       summary = r$summary %||% NA_character_, details = r$details %||% NA_character_,
       published = r$published %||% NA_character_, modified = r$modified %||% NA_character_,
       withdrawn = r$withdrawn %||% NA_character_,
-      upstream = .json_or_na(unlist(r$upstream)) %||% NA_character_,
-      aliases = .json_or_na(unlist(r$aliases)), related = .json_or_na(unlist(r$related)),
+      upstream = .json_array_or_na(r$upstream),
+      aliases = .json_array_or_na(r$aliases), related = .json_array_or_na(r$related),
       credits = .json_or_na(r$credits), severity = .json_or_na(r$severity),
       refs = .json_or_na(r$references), schema_version = r$schema_version %||% NA_character_,
       raw_json = it$raw, stringsAsFactors = FALSE)
