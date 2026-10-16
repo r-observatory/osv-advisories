@@ -55,3 +55,31 @@ test_that("guards: cold start passes, shrinking or empty does not", {
   prev_ok <- list(tables = list(advisories = 2L, advisory_history = 2L), history_earliest = "2026-10-15")
   expect_length(publish_guard(prev_ok, adv, hist), 0L)
 })
+
+test_that("merge_history with no advisories returns the previous history", {
+  h1 <- merge_history(NULL, adv_df(c("A", "B")), "2026-10-15")
+  expect_equal(merge_history(h1, empty_advisories(), "2026-10-16"), h1)
+  expect_equal(nrow(merge_history(NULL, empty_advisories(), "2026-10-16")), 0L)
+})
+
+up_row <- function(adv, uid, status, vec = NA_character_) {
+  data.frame(advisory_id = adv, upstream_id = uid, cvss_type = if (is.na(vec)) NA_character_ else "CVSS_V3",
+             cvss_vector = vec, base_score = NA_real_, rating = NA_character_,
+             lookup_status = status, fetched_at = "t", stringsAsFactors = FALSE)
+}
+
+test_that("a repeated failure stays failed, and kept rows match on advisory and upstream id", {
+  fresh <- up_row("A", "CVE-1", "failed")
+  prev <- up_row("A", "CVE-1", "failed")
+  expect_equal(carry_upstream(prev, fresh, "CVE-1")$lookup_status, "failed")
+  prev2 <- up_row("A", "CVE-1", "failed_kept_previous", "CVSS:3.1/x")
+  out2 <- carry_upstream(prev2, fresh, "CVE-1")
+  expect_equal(out2$lookup_status, "failed_kept_previous")
+  expect_equal(out2$cvss_vector, "CVSS:3.1/x")
+  fresh2 <- rbind(up_row("A", "CVE-1", "failed"), up_row("B", "CVE-1", "failed"))
+  prev3 <- rbind(up_row("A", "CVE-1", "ok", "CVSS:3.1/a"), up_row("B", "CVE-1", "failed"))
+  out3 <- carry_upstream(prev3, fresh2, "CVE-1")
+  expect_equal(out3$advisory_id, c("A", "B"))
+  expect_equal(out3$lookup_status, c("failed_kept_previous", "failed"))
+  expect_equal(out3$cvss_vector, c("CVSS:3.1/a", NA))
+})

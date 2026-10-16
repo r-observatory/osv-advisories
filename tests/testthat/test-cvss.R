@@ -42,3 +42,14 @@ test_that("upstream rows keep every id, scored or not", {
   expect_equal(r4$cvss_vector[1], "CVSS:4.0/AV:N")
   expect_true(is.na(r4$base_score[1]))
 })
+
+test_that("a severity entry that is not an object with type and score counts as absent", {
+  adv <- data.frame(id = "A", upstream = '["CVE-1"]', stringsAsFactors = FALSE)
+  for (sev in list("high", list("a", "b"), list(list(type = "CVSS_V3")), 5)) {
+    lk <- list("CVE-1" = list(status = "ok", record = list(severity = sev)))
+    rows <- upstream_rows(adv, lk, "t")
+    expect_equal(nrow(rows), 1L)
+    expect_true(is.na(rows$cvss_vector) && is.na(rows$base_score))
+    expect_equal(rows$lookup_status, "ok")
+  }
+})

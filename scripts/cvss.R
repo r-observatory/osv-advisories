@@ -69,6 +69,7 @@ upstream_rows <- function(adv, lookups, fetched_at) {
     for (uid in ids) {
       lk <- lookups[[uid]] %||% list(status = "failed", record = NULL)
       sev <- if (identical(lk$status, "ok")) lk$record$severity %||% list() else list()
+      sev <- Filter(function(x) is.list(x) && !is.null(x$type) && !is.null(x$score), as.list(sev))
       if (!length(sev)) sev <- list(list(type = NA_character_, score = NA_character_))
       for (s in sev) {
         score <- if (identical(s$type, "CVSS_V3")) cvss3_base_score(s$score) else NA_real_

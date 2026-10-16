@@ -4,6 +4,7 @@
 #' stamped with today. prev may be NULL (cold start).
 merge_history <- function(prev, adv, today) {
   prev <- if (is.null(prev)) empty_history() else prev[, names(empty_history()), drop = FALSE]
+  if (!nrow(adv)) return(prev)
   cur <- data.frame(advisory_id = adv$id, modified = adv$modified, first_seen = today,
                     raw_json = adv$raw_json, stringsAsFactors = FALSE)
   new <- cur[!paste(cur$advisory_id, cur$modified) %in% paste(prev$advisory_id, prev$modified), , drop = FALSE]
@@ -36,16 +37,18 @@ carry_forward <- function(prev, adv, history) {
   adv
 }
 
-#' Upstream rows for this run. Ids whose lookup failed keep the previous run's
-#' rows, marked failed_kept_previous; with no previous row they get one row with
-#' no vector, so the failure still shows.
+#' Upstream rows for this run. A failed lookup keeps the previous run's row for
+#' the same advisory and upstream id when that row carries a vector, marked
+#' failed_kept_previous; otherwise the failed row stays, so the failure shows.
 carry_upstream <- function(prev, fresh, failed_ids) {
-  keep <- fresh[!fresh$upstream_id %in% failed_ids, , drop = FALSE]
-  if (!length(failed_ids)) return(keep)
-  old <- if (is.null(prev)) fresh[0, ] else prev[prev$upstream_id %in% failed_ids, names(fresh), drop = FALSE]
+  if (!length(failed_ids)) return(fresh)
+  is_failed <- fresh$upstream_id %in% failed_ids
+  key <- function(d) paste(d$advisory_id, d$upstream_id, sep = "\r")
+  old <- if (is.null(prev)) fresh[0, ] else prev[, names(fresh), drop = FALSE]
+  old <- old[old$lookup_status %in% c("ok", "failed_kept_previous") &
+               key(old) %in% key(fresh[is_failed, , drop = FALSE]), , drop = FALSE]
   if (nrow(old)) old$lookup_status <- "failed_kept_previous"
-  missing <- fresh[fresh$upstream_id %in% setdiff(failed_ids, old$upstream_id), , drop = FALSE]
-  out <- rbind(keep, old, missing)
+  out <- rbind(fresh[!is_failed | !key(fresh) %in% key(old), , drop = FALSE], old)
   out <- out[order(out$advisory_id, out$upstream_id), , drop = FALSE]
   rownames(out) <- NULL
   out
