@@ -1,0 +1,103 @@
+name: Update OSV advisories
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: osv-advisories-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::RSQLite
+            any::DBI
+            any::jsonlite
+            any::curl
+            any::testthat
+            any::withr
+      - name: Run unit tests
+        run: Rscript tests/testthat.R
+      - name: Build advisories database
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p out
+          Rscript scripts/update.R out
+      - name: Publish to the "current" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # gh release view cannot tell 403 from 404, so read the status line.
+          STATUS=$( (gh api -i "repos/$GITHUB_REPOSITORY/releases/tags/current" 2>/dev/null || true) | head -1 | awk '{print $2}')
+          case "$STATUS" in
+            200) ;;
+            404) gh release create current --latest --title "OSV advisories (rolling)" \
+                   --notes "Security advisories for R packages from OSV, rebuilt daily." ;;
+            *) echo "::error::release current answered '$STATUS'"; exit 1 ;;
+          esac
+          gh release upload current out/osv-advisories.db out/manifest.json \
+            out/osv-CRAN-all.zip out/ADVISORY-DATA-LICENSE.txt --clobber
+      - name: Monthly backup release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="backup-$(date -u +%Y-%m)"
+          STATUS=$( (gh api -i "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null || true) | head -1 | awk '{print $2}')
+          case "$STATUS" in
+            200) echo "$TAG already exists" ;;
+            404) gh release create "$TAG" --latest=false --title "Backup $(date -u +%Y-%m)" \
+                   --notes "Monthly copy of the current release. Never overwritten." \
+                   out/osv-advisories.db out/manifest.json out/osv-CRAN-all.zip out/ADVISORY-DATA-LICENSE.txt ;;
+            *) echo "::error::release $TAG answered '$STATUS'"; exit 1 ;;
+          esac
+
+  keepalive:
+    # GitHub disables a public repository's scheduled workflows after 60 days
+    # without repository activity. Publishing a release does not count and a
+    # commit does, so this is its own job: a failed or timed-out update still
+    # keeps the schedule alive.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Update last run timestamp
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for _ in 1 2 3; do
+            # Decide against main as it is now, so a re-run or a push that lands
+            # meanwhile finds the newer commit and stops instead of conflicting.
+            git fetch --depth=1 origin main
+            git reset --hard FETCH_HEAD
+            if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -lt 72000 ]; then
+              echo "main already has a commit from the last 20 hours"
+              exit 0
+            fi
+            echo "Last updated: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" > last-updated.txt
+            git add last-updated.txt
+            git commit -m "chore: update last run time"
+            git push origin HEAD:main && exit 0
+            sleep 10
+          done
+          exit 1
